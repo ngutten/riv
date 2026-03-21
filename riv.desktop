@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=riv
+Comment=Fast, minimal image viewer for Linux
+Exec=riv %F
+Terminal=false
+Categories=Graphics;Viewer;
+MimeType=image/png;image/jpeg;image/gif;image/webp;image/bmp;image/tiff;image/avif;image/svg+xml;image/heif;image/heic;application/pdf;

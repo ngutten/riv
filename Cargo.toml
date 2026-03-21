@@ -1,0 +1,52 @@
+[package]
+name = "riv"
+version = "0.1.0"
+edition = "2021"
+description = "Fast, minimal image viewer for Linux"
+license = "CC0-1.0"
+repository = "https://github.com/ngutten/riv"
+authors = ["ngutten"]
+
+[dependencies]
+eframe = { version = "0.33", default-features = false, features = ["default_fonts", "wgpu", "x11", "wayland"] }
+wgpu = { version = "27", features = ["vulkan"] }
+egui = "0.33"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "bmp", "gif", "tiff", "avif"] }
+lru = "0.12"
+crossbeam-channel = "0.5"
+turbojpeg = "1.3"
+clap = { version = "4", features = ["derive"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+kamadak-exif = "0.5"
+trash = "5"
+arboard = "3"
+directories = "5"
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }
+resvg = "0.47"
+libheif-rs = { version = "2.5", optional = true }
+
+[features]
+default = []
+heif = ["dep:libheif-rs"]
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[package.metadata.deb]
+maintainer = "ngutten"
+copyright = "2025-2026, ngutten"
+section = "graphics"
+priority = "optional"
+depends = "$auto"
+recommends = "mupdf-tools, libraw-bin"
+assets = [
+    ["target/release/riv", "usr/bin/", "755"],
+    ["riv.desktop", "usr/share/applications/", "644"],
+]
+extended-description = "A fast, minimal image viewer for Linux. Supports PNG, JPEG, WebP, GIF (animated), TIFF, AVIF, SVG, PDF, RAW, and HEIF/HEIC."
+
+[package.metadata.deb.variants.heif]
+features = ["heif"]
+depends = "$auto"
+recommends = "mupdf-tools, libraw-bin"

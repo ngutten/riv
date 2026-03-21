@@ -1,0 +1,91 @@
+name: Build .deb packages
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-deb:
+    name: Build .deb
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential pkg-config cmake nasm \
+            libx11-dev libxcursor-dev libxrandr-dev libxi-dev \
+            libxkbcommon-x11-dev libxkbcommon-dev \
+            libwayland-dev libvulkan-dev \
+            libturbojpeg0-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.92.0"
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-deb
+        run: cargo install cargo-deb
+
+      - name: Build .deb package
+        run: cargo deb
+
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: riv-deb
+          path: target/debian/*.deb
+
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: target/debian/*.deb
+
+  build-deb-heif:
+    name: Build .deb (HEIF)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential pkg-config cmake nasm \
+            libx11-dev libxcursor-dev libxrandr-dev libxi-dev \
+            libxkbcommon-x11-dev libxkbcommon-dev \
+            libwayland-dev libvulkan-dev \
+            libturbojpeg0-dev libheif-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.92.0"
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-deb
+        run: cargo install cargo-deb
+
+      - name: Build .deb package (HEIF variant)
+        run: cargo deb --variant=heif
+
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: riv-deb-heif
+          path: target/debian/*.deb
+
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: target/debian/*.deb
