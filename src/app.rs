@@ -6,9 +6,9 @@ use crate::cache::{AnimatedTextures, TextureCache};
 use crate::config::Config;
 use crate::decode::DecodePipeline;
 use crate::dir::{self, DirState, ZipContext};
-use crate::exif_view::{self, ExifData};
+use crate::metadata::{self, ImageMetadata};
 use crate::input;
-use crate::state::{AppState, DialogState, EditAction, SortField, ViewMode, ZoomMode};
+use crate::state::{AppState, BrowseMode, CompareState, DialogState, EditAction, SortField, ViewMode, ZoomMode};
 use crate::status_bar;
 use crate::views;
 
@@ -18,9 +18,10 @@ pub struct RivApp {
     cache: TextureCache,
     pipeline: DecodePipeline,
     config: Config,
-    exif_cache: HashMap<PathBuf, Option<ExifData>>,
+    metadata_cache: HashMap<PathBuf, Option<ImageMetadata>>,
     pub has_mutool: bool,
     pub has_dcraw: bool,
+    first_frame: bool,
 }
 
 impl RivApp {
@@ -104,9 +105,10 @@ impl RivApp {
             cache: TextureCache::new(),
             pipeline: DecodePipeline::new(thumb_size),
             config,
-            exif_cache: HashMap::new(),
+            metadata_cache: HashMap::new(),
             has_mutool,
             has_dcraw,
+            first_frame: true,
         }
     }
 
@@ -255,6 +257,33 @@ impl RivApp {
                     }
                 }
             }
+            ViewMode::Compare => {
+                // Prefetch both visible images + ±1 neighbors
+                if let Some(ref cmp) = self.state.compare {
+                    let indices = [cmp.left_index, cmp.right_index];
+                    for &base in &indices {
+                        for &delta in &[0i32, -1, 1] {
+                            let target = base as i32 + delta;
+                            if target >= 0 && (target as usize) < self.dir.entries.len() {
+                                let entry = &self.dir.entries[target as usize];
+                                if !entry.is_dir
+                                    && self.cache.get_full(&entry.path).is_none()
+                                    && self.cache.get_animated(&entry.path).is_none()
+                                    && !self.cache.is_pending(&entry.path, false)
+                                {
+                                    self.cache.mark_pending(entry.path.clone(), false);
+                                    self.pipeline.request(
+                                        entry.path.clone(),
+                                        false,
+                                        self.cache.generation,
+                                        entry.zip_source.clone(),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -370,7 +399,7 @@ impl RivApp {
         self.state.clear_multi_select();
         self.cache.clear_all();
         self.pipeline.set_generation(self.cache.generation);
-        self.exif_cache.clear();
+        self.metadata_cache.clear();
     }
 
     fn open_in_tool(&mut self, name: &str, path: &std::path::Path) {
@@ -419,7 +448,7 @@ impl RivApp {
                 self.cache.image_dimensions.remove(&path_buf);
                 self.cache.pending_full.remove(&path_buf);
                 self.cache.pending_thumb.remove(&path_buf);
-                self.exif_cache.remove(&path_buf);
+                self.metadata_cache.remove(&path_buf);
                 self.state.status_message = Some((
                     format!("Rotated {}", if clockwise { "right" } else { "left" }),
                     Instant::now(),
@@ -497,8 +526,8 @@ impl RivApp {
                     dest_path: default_dest,
                 });
             }
-            EditAction::ViewExif => {
-                self.state.show_exif_overlay = !self.state.show_exif_overlay;
+            EditAction::ViewMetadata => {
+                self.state.show_metadata_popup = !self.state.show_metadata_popup;
             }
             EditAction::RotateLeft => {
                 if is_zip_source { return; }
@@ -528,6 +557,41 @@ impl RivApp {
             }
             EditAction::CopyPath => {
                 self.copy_path_to_clipboard(&path);
+            }
+            EditAction::Compare => {
+                // Multi-select exactly 2 → compare those
+                if self.state.multi_select_count() == 2 {
+                    let indices: Vec<usize> = self.state.multi_selected.iter().copied().collect();
+                    let left = indices[0];
+                    let right = indices[1];
+                    if !self.dir.entries[left].is_dir && !self.dir.entries[right].is_dir {
+                        self.state.previous_browse_mode = if self.state.view_mode == ViewMode::List {
+                            BrowseMode::List
+                        } else {
+                            BrowseMode::Grid
+                        };
+                        self.state.compare = Some(CompareState::new(left, right));
+                        self.state.view_mode = ViewMode::Compare;
+                    }
+                } else {
+                    // Compare current with next image
+                    let mut next = None;
+                    for idx in (abs_idx + 1)..self.dir.entries.len() {
+                        if !self.dir.entries[idx].is_dir {
+                            next = Some(idx);
+                            break;
+                        }
+                    }
+                    if let Some(right) = next {
+                        self.state.previous_browse_mode = if self.state.view_mode == ViewMode::List {
+                            BrowseMode::List
+                        } else {
+                            BrowseMode::Grid
+                        };
+                        self.state.compare = Some(CompareState::new(abs_idx, right));
+                        self.state.view_mode = ViewMode::Compare;
+                    }
+                }
             }
         }
     }
@@ -740,6 +804,12 @@ impl eframe::App for RivApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Maximize on first frame (more reliable than builder hint on some WMs)
+        if self.first_frame {
+            self.first_frame = false;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+        }
+
         // Always request repaint so the surface stays current during window resize
         ctx.request_repaint();
 
@@ -815,7 +885,7 @@ impl eframe::App for RivApp {
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
 
         // Menu bar (only in browse modes)
-        if self.state.view_mode != ViewMode::Single {
+        if self.state.view_mode != ViewMode::Single && self.state.view_mode != ViewMode::Compare {
             egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
                 egui::MenuBar::new().ui(ui, |ui| {
                     ui.menu_button("View", |ui| {
@@ -920,8 +990,8 @@ impl eframe::App for RivApp {
                             self.state.pending_edit_action = Some(EditAction::CopyTo);
                             ui.close();
                         }
-                        if ui.add_enabled(!single_disabled, egui::Button::new("View EXIF")).clicked() {
-                            self.state.pending_edit_action = Some(EditAction::ViewExif);
+                        if ui.add_enabled(!single_disabled, egui::Button::new("Metadata")).clicked() {
+                            self.state.pending_edit_action = Some(EditAction::ViewMetadata);
                             ui.close();
                         }
                         ui.separator();
@@ -1006,14 +1076,15 @@ impl eframe::App for RivApp {
             let avail = ui.available_size();
             let status_height = 22.0;
             let path_bar_height = 24.0;
-            let filter_bar_height = if self.state.filter_active && self.state.view_mode != ViewMode::Single {
+            let is_browse = matches!(self.state.view_mode, ViewMode::List | ViewMode::Grid);
+            let filter_bar_height = if self.state.filter_active && is_browse {
                 24.0
             } else {
                 0.0
             };
 
             // Path bar
-            if self.state.view_mode != ViewMode::Single {
+            if is_browse {
                 let path_bar_rect = ui.allocate_exact_size(
                     egui::vec2(avail.x, path_bar_height),
                     egui::Sense::hover(),
@@ -1155,10 +1226,21 @@ impl eframe::App for RivApp {
                         &self.pipeline,
                     );
                 }
+                ViewMode::Compare => {
+                    if let Some(ref compare) = self.state.compare {
+                        views::compare::draw(
+                            &mut content_ui,
+                            compare,
+                            &self.dir,
+                            &mut self.cache,
+                            &self.pipeline,
+                        );
+                    }
+                }
             }
 
             // Filter bar
-            if self.state.filter_active && self.state.view_mode != ViewMode::Single {
+            if self.state.filter_active && is_browse {
                 let filter_rect = ui.allocate_exact_size(
                     egui::vec2(ui.available_width(), filter_bar_height),
                     egui::Sense::hover(),
@@ -1190,19 +1272,18 @@ impl eframe::App for RivApp {
                 self.dispatch_edit_action(action);
             }
 
-            // EXIF overlay (single view or preview-focused browse)
-            if self.state.show_exif_overlay {
+            // Metadata inline overlay (e key)
+            if self.state.show_metadata_overlay {
                 let abs_idx = self.state.resolved_index();
                 if let Some(entry) = self.dir.entries.get(abs_idx) {
                     if !entry.is_dir && entry.zip_source.is_none() {
                         let path = entry.path.clone();
-                        if !self.exif_cache.contains_key(&path) {
-                            let data = exif_view::read_exif(&path);
-                            self.exif_cache.insert(path.clone(), data);
+                        if !self.metadata_cache.contains_key(&path) {
+                            let data = metadata::read_metadata(&path);
+                            self.metadata_cache.insert(path.clone(), data);
                         }
-                        let exif_data = self.exif_cache.get(&path).and_then(|o| o.as_ref());
-                        // Draw over content area
-                        exif_view::draw_exif_overlay(ui, content_rect, exif_data);
+                        let meta = self.metadata_cache.get(&path).and_then(|o| o.as_ref());
+                        metadata::draw_metadata_overlay(ui, content_rect, meta);
                     }
                 }
             }
@@ -1210,6 +1291,26 @@ impl eframe::App for RivApp {
             // Status bar
             status_bar::draw(ui, &self.state, &self.dir, &self.cache);
         });
+
+        // Metadata popup window
+        if self.state.show_metadata_popup {
+            let abs_idx = self.state.resolved_index();
+            let meta = if let Some(entry) = self.dir.entries.get(abs_idx) {
+                if !entry.is_dir && entry.zip_source.is_none() {
+                    let path = entry.path.clone();
+                    if !self.metadata_cache.contains_key(&path) {
+                        let data = metadata::read_metadata(&path);
+                        self.metadata_cache.insert(path.clone(), data);
+                    }
+                    self.metadata_cache.get(&path).and_then(|o| o.as_ref()).cloned()
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            metadata::draw_metadata_popup(ctx, meta.as_ref(), &mut self.state.show_metadata_popup);
+        }
 
         // Expire old status messages
         if let Some((_, when)) = &self.state.status_message {

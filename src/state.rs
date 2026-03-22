@@ -33,6 +33,7 @@ pub enum ViewMode {
     List,
     Grid,
     Single,
+    Compare,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,13 +77,14 @@ impl ZoomMode {
 pub enum EditAction {
     Rename,
     CopyTo,
-    ViewExif,
+    ViewMetadata,
     RotateLeft,
     RotateRight,
     OpenInGimp,
     OpenInKrita,
     Delete,
     CopyPath,
+    Compare,
 }
 
 #[derive(Debug, Clone)]
@@ -96,6 +98,67 @@ pub struct DecodedFrame {
     pub rgba: Vec<u8>,
     pub width: u32,
     pub height: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompareSide {
+    Left,
+    Right,
+}
+
+pub struct ZoomPan {
+    pub zoom_mode: ZoomMode,
+    pub zoom_level: f32,
+    pub pan_offset: egui::Vec2,
+    pub is_dragging: bool,
+    pub last_drag_pos: Option<egui::Pos2>,
+}
+
+impl ZoomPan {
+    pub fn new() -> Self {
+        Self {
+            zoom_mode: ZoomMode::FitWindow,
+            zoom_level: 1.0,
+            pan_offset: egui::Vec2::ZERO,
+            is_dragging: false,
+            last_drag_pos: None,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.zoom_mode = ZoomMode::FitWindow;
+        self.zoom_level = 1.0;
+        self.pan_offset = egui::Vec2::ZERO;
+    }
+}
+
+pub struct CompareState {
+    pub left_index: usize,
+    pub right_index: usize,
+    pub active_side: CompareSide,
+    pub left_zoom: ZoomPan,
+    pub right_zoom: ZoomPan,
+    pub locked: bool,
+}
+
+impl CompareState {
+    pub fn new(left: usize, right: usize) -> Self {
+        Self {
+            left_index: left,
+            right_index: right,
+            active_side: CompareSide::Left,
+            left_zoom: ZoomPan::new(),
+            right_zoom: ZoomPan::new(),
+            locked: true,
+        }
+    }
+
+    pub fn active_zoom(&mut self) -> &mut ZoomPan {
+        match self.active_side {
+            CompareSide::Left => &mut self.left_zoom,
+            CompareSide::Right => &mut self.right_zoom,
+        }
+    }
 }
 
 pub struct AppState {
@@ -125,8 +188,10 @@ pub struct AppState {
     pub last_click_index: Option<usize>,
     // Image info overlay
     pub show_info_overlay: bool,
-    // EXIF overlay
-    pub show_exif_overlay: bool,
+    // Metadata overlay (inline)
+    pub show_metadata_overlay: bool,
+    // Metadata popup window
+    pub show_metadata_popup: bool,
     // Modal dialog
     pub dialog: Option<DialogState>,
     // Transient status message
@@ -137,6 +202,8 @@ pub struct AppState {
     pub animation_playing: bool,
     // Configurable thumbnail size
     pub thumb_size: u32,
+    // Compare mode state
+    pub compare: Option<CompareState>,
 }
 
 impl AppState {
@@ -168,13 +235,15 @@ impl AppState {
             multi_selected: BTreeSet::new(),
             last_click_index: None,
             show_info_overlay: false,
-            show_exif_overlay: false,
+            show_metadata_overlay: false,
+            show_metadata_popup: false,
             dialog: None,
             status_message: None,
             animation_frame: 0,
             animation_elapsed: 0.0,
             animation_playing: true,
             thumb_size: 160,
+            compare: None,
         }
     }
 

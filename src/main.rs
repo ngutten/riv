@@ -3,7 +3,7 @@ mod cache;
 mod config;
 mod decode;
 mod dir;
-mod exif_view;
+mod metadata;
 mod input;
 mod state;
 mod status_bar;

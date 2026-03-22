@@ -2887,6 +2887,7 @@ dependencies = [
  "kamadak-exif",
  "libheif-rs",
  "lru",
+ "png",
  "resvg",
  "serde",
  "toml 0.8.23",

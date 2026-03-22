@@ -1,5 +1,5 @@
 use crate::dir::DirState;
-use crate::state::{AppState, BrowseMode, EditAction, ViewMode, ZoomMode};
+use crate::state::{AppState, BrowseMode, CompareSide, CompareState, EditAction, ViewMode, ZoomMode};
 
 pub struct InputAction {
     pub enter_directory: Option<usize>,
@@ -114,13 +114,13 @@ pub fn handle_input(
     }
 
     ctx.input(|i| {
-        if i.key_pressed(egui::Key::Q) && state.view_mode != ViewMode::Single {
+        if i.key_pressed(egui::Key::Q) && matches!(state.view_mode, ViewMode::List | ViewMode::Grid) {
             action.quit = true;
             return;
         }
 
         // Ctrl+L focuses path bar; / starts filter (in browse modes)
-        if state.view_mode != ViewMode::Single {
+        if matches!(state.view_mode, ViewMode::List | ViewMode::Grid) {
             if i.modifiers.command && i.key_pressed(egui::Key::L) {
                 action.focus_path_bar = true;
                 return;
@@ -168,7 +168,7 @@ pub fn handle_input(
                 } else if i.key_pressed(egui::Key::I) {
                     state.show_info_overlay = !state.show_info_overlay;
                 } else if i.key_pressed(egui::Key::E) {
-                    state.show_exif_overlay = !state.show_exif_overlay;
+                    state.show_metadata_overlay = !state.show_metadata_overlay;
                 } else if i.key_pressed(egui::Key::G) && !i.modifiers.shift {
                     state.pending_edit_action = Some(EditAction::OpenInGimp);
                 } else if i.key_pressed(egui::Key::Y) {
@@ -183,7 +183,7 @@ pub fn handle_input(
                 } else {
                     let scroll_delta = i.smooth_scroll_delta.y;
                     if scroll_delta != 0.0 && pointer_in_preview {
-                        let factor = if scroll_delta > 0.0 { 1.1 } else { 1.0 / 1.1 };
+                        let factor = 1.1f32.powf(scroll_delta / 80.0);
                         state.zoom_mode = ZoomMode::Custom;
                         state.zoom_level *= factor;
                         state.zoom_level = state.zoom_level.clamp(0.05, 50.0);
@@ -318,7 +318,7 @@ pub fn handle_input(
                 }
                 // Edit action shortcuts
                 if i.key_pressed(egui::Key::E) {
-                    state.show_exif_overlay = !state.show_exif_overlay;
+                    state.show_metadata_overlay = !state.show_metadata_overlay;
                 }
                 if i.key_pressed(egui::Key::G) && !i.modifiers.shift {
                     state.pending_edit_action = Some(EditAction::OpenInGimp);
@@ -331,6 +331,10 @@ pub fn handle_input(
                 }
                 if i.key_pressed(egui::Key::F2) {
                     state.pending_edit_action = Some(EditAction::Rename);
+                }
+                // Compare mode: c key
+                if i.key_pressed(egui::Key::C) && !i.modifiers.command {
+                    enter_compare(state, dir);
                 }
                 // Reset preview zoom and auto-scroll when selection changes
                 if state.selected_index != prev_index {
@@ -448,7 +452,7 @@ pub fn handle_input(
                 }
                 // Edit action shortcuts
                 if i.key_pressed(egui::Key::E) {
-                    state.show_exif_overlay = !state.show_exif_overlay;
+                    state.show_metadata_overlay = !state.show_metadata_overlay;
                 }
                 if i.key_pressed(egui::Key::G) && !i.modifiers.shift {
                     state.pending_edit_action = Some(EditAction::OpenInGimp);
@@ -461,6 +465,10 @@ pub fn handle_input(
                 }
                 if i.key_pressed(egui::Key::F2) {
                     state.pending_edit_action = Some(EditAction::Rename);
+                }
+                // Compare mode: c key
+                if i.key_pressed(egui::Key::C) && !i.modifiers.command {
+                    enter_compare(state, dir);
                 }
                 // Reset preview zoom and auto-scroll when selection changes
                 if state.selected_index != prev_index {
@@ -482,7 +490,7 @@ pub fn handle_input(
                 }
                 // Edit action shortcuts
                 if i.key_pressed(egui::Key::E) {
-                    state.show_exif_overlay = !state.show_exif_overlay;
+                    state.show_metadata_overlay = !state.show_metadata_overlay;
                 }
                 if i.key_pressed(egui::Key::G) && !i.modifiers.shift {
                     state.pending_edit_action = Some(EditAction::OpenInGimp);
@@ -492,6 +500,22 @@ pub fn handle_input(
                 }
                 if i.key_pressed(egui::Key::Delete) {
                     state.pending_edit_action = Some(EditAction::Delete);
+                }
+                // Compare mode: c → compare current with next image
+                if i.key_pressed(egui::Key::C) && !i.modifiers.command {
+                    let abs = state.resolved_index();
+                    // Find next non-dir image
+                    let mut next = None;
+                    for idx in (abs + 1)..dir.entries.len() {
+                        if !dir.entries[idx].is_dir {
+                            next = Some(idx);
+                            break;
+                        }
+                    }
+                    if let Some(right) = next {
+                        state.compare = Some(CompareState::new(abs, right));
+                        state.view_mode = ViewMode::Compare;
+                    }
                 }
                 // Space toggles play/pause for animated GIFs, otherwise navigates
                 if i.key_pressed(egui::Key::Space) {
@@ -550,7 +574,7 @@ pub fn handle_input(
                 }
                 let scroll_delta = i.smooth_scroll_delta.y;
                 if scroll_delta != 0.0 {
-                    let factor = if scroll_delta > 0.0 { 1.1 } else { 1.0 / 1.1 };
+                    let factor = 1.1f32.powf(scroll_delta / 80.0);
                     state.zoom_mode = ZoomMode::Custom;
                     if state.zoom_level == 1.0 {
                         // Initialize from current effective size
@@ -583,10 +607,188 @@ pub fn handle_input(
                     state.last_drag_pos = None;
                 }
             }
+            ViewMode::Compare => {
+                if let Some(ref mut cmp) = state.compare {
+                    if i.key_pressed(egui::Key::Escape) || i.key_pressed(egui::Key::Q) {
+                        state.view_mode = match state.previous_browse_mode {
+                            BrowseMode::List => ViewMode::List,
+                            BrowseMode::Grid => ViewMode::Grid,
+                        };
+                        state.compare = None;
+                        state.scroll_to_selected = true;
+                    } else if i.key_pressed(egui::Key::Tab) {
+                        cmp.active_side = match cmp.active_side {
+                            CompareSide::Left => CompareSide::Right,
+                            CompareSide::Right => CompareSide::Left,
+                        };
+                    } else if i.key_pressed(egui::Key::K) {
+                        cmp.locked = !cmp.locked;
+                    } else if i.key_pressed(egui::Key::ArrowLeft) || i.key_pressed(egui::Key::H) {
+                        navigate_compare_side(cmp, dir, -1);
+                    } else if i.key_pressed(egui::Key::ArrowRight) || i.key_pressed(egui::Key::L) {
+                        navigate_compare_side(cmp, dir, 1);
+                    } else if i.key_pressed(egui::Key::F) {
+                        let new_mode = cmp.active_zoom().zoom_mode.cycle();
+                        if cmp.locked {
+                            cmp.left_zoom.zoom_mode = new_mode;
+                            cmp.left_zoom.pan_offset = egui::Vec2::ZERO;
+                            cmp.right_zoom.zoom_mode = new_mode;
+                            cmp.right_zoom.pan_offset = egui::Vec2::ZERO;
+                        } else {
+                            let z = cmp.active_zoom();
+                            z.zoom_mode = new_mode;
+                            z.pan_offset = egui::Vec2::ZERO;
+                        }
+                    } else if i.key_pressed(egui::Key::Num0) {
+                        if cmp.locked {
+                            cmp.left_zoom.reset();
+                            cmp.right_zoom.reset();
+                        } else {
+                            cmp.active_zoom().reset();
+                        }
+                    } else if i.key_pressed(egui::Key::E) {
+                        state.show_metadata_overlay = !state.show_metadata_overlay;
+                    } else if i.key_pressed(egui::Key::I) {
+                        state.show_info_overlay = !state.show_info_overlay;
+                    } else {
+                        // Scroll zoom
+                        let scroll_delta = i.smooth_scroll_delta.y;
+                        if scroll_delta != 0.0 {
+                            let factor = 1.1f32.powf(scroll_delta / 80.0);
+                            if cmp.locked {
+                                cmp.left_zoom.zoom_mode = ZoomMode::Custom;
+                                cmp.left_zoom.zoom_level = (cmp.left_zoom.zoom_level * factor).clamp(0.05, 50.0);
+                                cmp.right_zoom.zoom_mode = ZoomMode::Custom;
+                                cmp.right_zoom.zoom_level = (cmp.right_zoom.zoom_level * factor).clamp(0.05, 50.0);
+                            } else {
+                                let z = cmp.active_zoom();
+                                z.zoom_mode = ZoomMode::Custom;
+                                z.zoom_level = (z.zoom_level * factor).clamp(0.05, 50.0);
+                            }
+                        }
+                        // +/- zoom
+                        if i.key_pressed(egui::Key::Equals) || i.key_pressed(egui::Key::Plus) {
+                            if cmp.locked {
+                                cmp.left_zoom.zoom_mode = ZoomMode::Custom;
+                                cmp.left_zoom.zoom_level = (cmp.left_zoom.zoom_level * 1.25).clamp(0.05, 50.0);
+                                cmp.right_zoom.zoom_mode = ZoomMode::Custom;
+                                cmp.right_zoom.zoom_level = (cmp.right_zoom.zoom_level * 1.25).clamp(0.05, 50.0);
+                            } else {
+                                let z = cmp.active_zoom();
+                                z.zoom_mode = ZoomMode::Custom;
+                                z.zoom_level = (z.zoom_level * 1.25).clamp(0.05, 50.0);
+                            }
+                        }
+                        if i.key_pressed(egui::Key::Minus) {
+                            if cmp.locked {
+                                cmp.left_zoom.zoom_mode = ZoomMode::Custom;
+                                cmp.left_zoom.zoom_level = (cmp.left_zoom.zoom_level / 1.25).clamp(0.05, 50.0);
+                                cmp.right_zoom.zoom_mode = ZoomMode::Custom;
+                                cmp.right_zoom.zoom_level = (cmp.right_zoom.zoom_level / 1.25).clamp(0.05, 50.0);
+                            } else {
+                                let z = cmp.active_zoom();
+                                z.zoom_mode = ZoomMode::Custom;
+                                z.zoom_level = (z.zoom_level / 1.25).clamp(0.05, 50.0);
+                            }
+                        }
+                        // Pan via drag
+                        if i.pointer.any_down() {
+                            if let Some(pos) = i.pointer.latest_pos() {
+                                if cmp.locked {
+                                    if let Some(last) = cmp.left_zoom.last_drag_pos {
+                                        let delta = pos - last;
+                                        cmp.left_zoom.pan_offset += delta;
+                                        cmp.right_zoom.pan_offset += delta;
+                                    }
+                                    cmp.left_zoom.last_drag_pos = Some(pos);
+                                    cmp.right_zoom.last_drag_pos = Some(pos);
+                                    cmp.left_zoom.is_dragging = true;
+                                    cmp.right_zoom.is_dragging = true;
+                                } else {
+                                    let z = cmp.active_zoom();
+                                    if let Some(last) = z.last_drag_pos {
+                                        let delta = pos - last;
+                                        z.pan_offset += delta;
+                                    }
+                                    z.last_drag_pos = Some(pos);
+                                    z.is_dragging = true;
+                                }
+                            }
+                        } else {
+                            cmp.left_zoom.is_dragging = false;
+                            cmp.left_zoom.last_drag_pos = None;
+                            cmp.right_zoom.is_dragging = false;
+                            cmp.right_zoom.last_drag_pos = None;
+                        }
+                    }
+                }
+            }
         }
     });
 
     action
+}
+
+fn enter_compare(state: &mut AppState, dir: &DirState) {
+    // If multi-selected exactly 2 images, use those
+    if state.multi_select_count() == 2 {
+        let indices: Vec<usize> = state.multi_selected.iter().copied().collect();
+        let left = indices[0];
+        let right = indices[1];
+        if !dir.entries[left].is_dir && !dir.entries[right].is_dir {
+            state.previous_browse_mode = if state.view_mode == ViewMode::List {
+                BrowseMode::List
+            } else {
+                BrowseMode::Grid
+            };
+            state.compare = Some(CompareState::new(left, right));
+            state.view_mode = ViewMode::Compare;
+        }
+        return;
+    }
+    // Otherwise compare selected with next image
+    let abs = state.resolved_index();
+    if let Some(entry) = dir.entries.get(abs) {
+        if entry.is_dir {
+            return;
+        }
+    } else {
+        return;
+    }
+    let mut next = None;
+    for idx in (abs + 1)..dir.entries.len() {
+        if !dir.entries[idx].is_dir {
+            next = Some(idx);
+            break;
+        }
+    }
+    if let Some(right) = next {
+        state.previous_browse_mode = if state.view_mode == ViewMode::List {
+            BrowseMode::List
+        } else {
+            BrowseMode::Grid
+        };
+        state.compare = Some(CompareState::new(abs, right));
+        state.view_mode = ViewMode::Compare;
+    }
+}
+
+fn navigate_compare_side(cmp: &mut CompareState, dir: &DirState, direction: i32) {
+    let idx = match cmp.active_side {
+        CompareSide::Left => &mut cmp.left_index,
+        CompareSide::Right => &mut cmp.right_index,
+    };
+    let mut new_idx = *idx as i32;
+    loop {
+        new_idx += direction;
+        if new_idx < 0 || new_idx >= dir.entries.len() as i32 {
+            return;
+        }
+        if !dir.entries[new_idx as usize].is_dir {
+            *idx = new_idx as usize;
+            return;
+        }
+    }
 }
 
 fn navigate_single(state: &mut AppState, dir: &DirState, direction: i32) {

@@ -15,8 +15,8 @@ fn context_menu_items(ui: &mut egui::Ui, state: &mut AppState) {
         state.pending_edit_action = Some(EditAction::CopyTo);
         ui.close();
     }
-    if ui.add_enabled(!multi, egui::Button::new("View EXIF")).clicked() {
-        state.pending_edit_action = Some(EditAction::ViewExif);
+    if ui.add_enabled(!multi, egui::Button::new("Metadata")).clicked() {
+        state.pending_edit_action = Some(EditAction::ViewMetadata);
         ui.close();
     }
     if ui.add_enabled(!multi, egui::Button::new("Rotate Left")).clicked() {
@@ -34,6 +34,11 @@ fn context_menu_items(ui: &mut egui::Ui, state: &mut AppState) {
     }
     if ui.button("Open in Krita").clicked() {
         state.pending_edit_action = Some(EditAction::OpenInKrita);
+        ui.close();
+    }
+    ui.separator();
+    if ui.button("Compare...").clicked() {
+        state.pending_edit_action = Some(EditAction::Compare);
         ui.close();
     }
     ui.separator();

@@ -14,8 +14,8 @@ fn context_menu_items(ui: &mut egui::Ui, state: &mut AppState, is_dir: bool) {
         state.pending_edit_action = Some(EditAction::CopyTo);
         ui.close();
     }
-    if ui.add_enabled(!single_disabled, egui::Button::new("View EXIF")).clicked() {
-        state.pending_edit_action = Some(EditAction::ViewExif);
+    if ui.add_enabled(!single_disabled, egui::Button::new("Metadata")).clicked() {
+        state.pending_edit_action = Some(EditAction::ViewMetadata);
         ui.close();
     }
     if ui.add_enabled(!single_disabled, egui::Button::new("Rotate Left")).clicked() {
@@ -33,6 +33,11 @@ fn context_menu_items(ui: &mut egui::Ui, state: &mut AppState, is_dir: bool) {
     }
     if ui.add_enabled(!is_dir, egui::Button::new("Open in Krita")).clicked() {
         state.pending_edit_action = Some(EditAction::OpenInKrita);
+        ui.close();
+    }
+    ui.separator();
+    if ui.add_enabled(!is_dir, egui::Button::new("Compare...")).clicked() {
+        state.pending_edit_action = Some(EditAction::Compare);
         ui.close();
     }
     ui.separator();
@@ -59,14 +64,17 @@ pub fn draw(ui: &mut egui::Ui, state: &mut AppState, dir: &DirState) {
         return;
     }
 
+    let spacing_y = ui.spacing().item_spacing.y;
+    let row_pitch = ROW_HEIGHT + spacing_y;
+
     let mut scroll = egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible);
 
     if state.scroll_to_selected {
-        let y = state.selected_index as f32 * ROW_HEIGHT;
+        let y = state.selected_index as f32 * row_pitch;
         scroll = scroll.vertical_scroll_offset(
-            (y - ui.available_height() / 2.0 + ROW_HEIGHT / 2.0).max(0.0),
+            (y - ui.available_height() / 2.0 + row_pitch / 2.0).max(0.0),
         );
         state.scroll_to_selected = false;
     }

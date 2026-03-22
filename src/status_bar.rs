@@ -1,6 +1,6 @@
 use crate::cache::TextureCache;
 use crate::dir::DirState;
-use crate::state::{AppState, ViewMode};
+use crate::state::{AppState, CompareSide, ViewMode};
 
 pub fn draw(ui: &mut egui::Ui, state: &AppState, dir: &DirState, cache: &TextureCache) {
     let height = 22.0;
@@ -61,6 +61,22 @@ pub fn draw(ui: &mut egui::Ui, state: &AppState, dir: &DirState, cache: &Texture
                 String::new()
             }
         }
+        ViewMode::Compare => {
+            if let Some(ref cmp) = state.compare {
+                let left_name = dir.entries.get(cmp.left_index)
+                    .map(|e| e.name.as_str()).unwrap_or("?");
+                let right_name = dir.entries.get(cmp.right_index)
+                    .map(|e| e.name.as_str()).unwrap_or("?");
+                let side = match cmp.active_side {
+                    CompareSide::Left => "L",
+                    CompareSide::Right => "R",
+                };
+                let lock = if cmp.locked { " [LOCKED]" } else { "" };
+                format!(" Compare: {} | {} (active: {}){}", left_name, right_name, side, lock)
+            } else {
+                String::new()
+            }
+        }
     } };
 
     let pending = cache.pending_full.len() + cache.pending_thumb.len();
@@ -75,12 +91,27 @@ pub fn draw(ui: &mut egui::Ui, state: &AppState, dir: &DirState, cache: &Texture
             ViewMode::List => "LIST",
             ViewMode::Grid => "GRID",
             ViewMode::Single => "VIEW",
+            ViewMode::Compare => "COMPARE",
         };
-        let sort_indicator = if state.view_mode != ViewMode::Single {
+        let sort_indicator = if matches!(state.view_mode, ViewMode::List | ViewMode::Grid) {
             let arrow = if state.sort_ascending { "\u{25b2}" } else { "\u{25bc}" };
             format!("{} {} | ", state.sort_field.label(), arrow)
         } else {
             String::new()
+        };
+        let dims_str = {
+            let idx = if state.view_mode == ViewMode::Compare {
+                state.compare.as_ref().map(|c| match c.active_side {
+                    CompareSide::Left => c.left_index,
+                    CompareSide::Right => c.right_index,
+                }).unwrap_or(abs_idx)
+            } else {
+                abs_idx
+            };
+            dir.entries.get(idx)
+                .and_then(|e| cache.image_dimensions.get(&e.path))
+                .map(|(w, h)| format!("{}x{} | ", w, h))
+                .unwrap_or_default()
         };
         let visible = state.visible_count(dir);
         let pos = if visible == 0 {
@@ -93,7 +124,7 @@ pub fn draw(ui: &mut egui::Ui, state: &AppState, dir: &DirState, cache: &Texture
         } else {
             format!("{} images, {} dirs", dir.image_count, dir.dir_count)
         };
-        format!("{}{}{} | {} | {} ", loading_str, sort_indicator, counts, pos, mode_str)
+        format!("{}{}{}{} | {} | {} ", loading_str, dims_str, sort_indicator, counts, pos, mode_str)
     };
 
     ui.painter().text(
