@@ -8,7 +8,7 @@ use crate::decode::DecodePipeline;
 use crate::dir::{self, DirState, ZipContext};
 use crate::metadata::{self, ImageMetadata};
 use crate::input;
-use crate::state::{AppState, BrowseMode, CompareState, DialogState, EditAction, SortField, ViewMode, ZoomMode};
+use crate::state::{AppState, BrowseMode, CompareState, DialogState, EditAction, ImageFilter, SortField, ViewMode, ZoomMode};
 use crate::status_bar;
 use crate::views;
 
@@ -130,7 +130,7 @@ impl RivApp {
                     let handle = ctx.load_texture(
                         format!("{}#frame{}", result.path.to_string_lossy(), i),
                         color_image,
-                        egui::TextureOptions::LINEAR,
+                        self.state.image_filter.texture_options(),
                     );
                     frames.push(handle);
                 }
@@ -163,10 +163,15 @@ impl RivApp {
                     [decoded.width as usize, decoded.height as usize],
                     &decoded.rgba,
                 );
+                let tex_opts = if result.is_thumbnail {
+                    egui::TextureOptions::LINEAR
+                } else {
+                    self.state.image_filter.texture_options()
+                };
                 let handle = ctx.load_texture(
                     result.path.to_string_lossy(),
                     color_image,
-                    egui::TextureOptions::LINEAR,
+                    tex_opts,
                 );
                 if result.is_thumbnail {
                     self.cache.insert_thumb(result.path, handle);
@@ -912,6 +917,21 @@ impl eframe::App for RivApp {
                                     self.state.default_zoom_mode = mode;
                                     self.state.zoom_level = 1.0;
                                     self.state.pan_offset = egui::Vec2::ZERO;
+                                    ui.close();
+                                }
+                            }
+                        });
+
+                        // Interpolation submenu
+                        ui.menu_button("Interpolation", |ui| {
+                            for filter in [ImageFilter::Nearest, ImageFilter::Linear] {
+                                let prev = self.state.image_filter;
+                                if ui.radio_value(&mut self.state.image_filter, filter, filter.label()).clicked() {
+                                    if prev != self.state.image_filter {
+                                        // Clear full image + animated caches to re-upload with new filter
+                                        self.cache.clear_full();
+                                        self.cache.clear_animated();
+                                    }
                                     ui.close();
                                 }
                             }

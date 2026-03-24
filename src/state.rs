@@ -74,6 +74,28 @@ impl ZoomMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageFilter {
+    Nearest,
+    Linear,
+}
+
+impl ImageFilter {
+    pub fn label(self) -> &'static str {
+        match self {
+            ImageFilter::Nearest => "Nearest (Sharp)",
+            ImageFilter::Linear => "Bilinear (Smooth)",
+        }
+    }
+
+    pub fn texture_options(self) -> egui::TextureOptions {
+        match self {
+            ImageFilter::Nearest => egui::TextureOptions::NEAREST,
+            ImageFilter::Linear => egui::TextureOptions::LINEAR,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditAction {
     Rename,
     CopyTo,
@@ -204,6 +226,8 @@ pub struct AppState {
     pub thumb_size: u32,
     // Compare mode state
     pub compare: Option<CompareState>,
+    // Image interpolation filter
+    pub image_filter: ImageFilter,
 }
 
 impl AppState {
@@ -244,6 +268,7 @@ impl AppState {
             animation_playing: true,
             thumb_size: 160,
             compare: None,
+            image_filter: ImageFilter::Nearest,
         }
     }
 

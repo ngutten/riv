@@ -75,6 +75,15 @@ impl TextureCache {
         }
     }
 
+    pub fn clear_full(&mut self) {
+        self.full.clear();
+        self.pending_full.clear();
+    }
+
+    pub fn clear_animated(&mut self) {
+        self.animated.clear();
+    }
+
     pub fn clear_all(&mut self) {
         self.full.clear();
         self.thumbs.clear();
