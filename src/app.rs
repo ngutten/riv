@@ -296,7 +296,9 @@ impl RivApp {
         self.state.current_dir = path;
         self.dir = DirState::scan(&self.state.current_dir);
         self.dir.sort(self.state.sort_field, self.state.sort_ascending);
-        self.state.selected_index = 0;
+        self.state.selected_index = self.dir.entries.iter()
+            .position(|e| !e.is_dir)
+            .unwrap_or(0);
         self.state.clear_filter();
         self.cache.clear_all();
         self.pipeline.set_generation(self.cache.generation);
@@ -318,7 +320,9 @@ impl RivApp {
             self.state.current_dir =
                 PathBuf::from(format!("{}!{}", archive_path.display(), inner_prefix));
         }
-        self.state.selected_index = 0;
+        self.state.selected_index = self.dir.entries.iter()
+            .position(|e| !e.is_dir)
+            .unwrap_or(0);
         self.state.clear_filter();
         self.cache.clear_all();
         self.pipeline.set_generation(self.cache.generation);
@@ -328,6 +332,14 @@ impl RivApp {
 
     fn handle_enter_directory(&mut self, idx: usize) {
         let entry = &self.dir.entries[idx];
+
+        // ".." always means go up (critical for zip archives where
+        // appending ".." to the inner prefix creates an invalid path)
+        if entry.name == ".." {
+            self.handle_go_up();
+            return;
+        }
+
         let path = entry.path.clone();
 
         if dir::is_zip(&path) && path.exists() {

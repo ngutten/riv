@@ -224,46 +224,70 @@ pub fn handle_input(
                 }
             }
             ViewMode::List => {
+                // Build image-only index for navigation (dirs are in separate panel)
+                let image_indices: Vec<usize> = (0..dir.entries.len())
+                    .filter(|&idx| !dir.entries[idx].is_dir)
+                    .collect();
+                let img_total = image_indices.len();
+                let cur_img_pos = image_indices.iter()
+                    .position(|&idx| idx == state.selected_index)
+                    .unwrap_or(0);
+
+                // Auto-correct if selected_index points to a dir
+                if img_total > 0 && !image_indices.contains(&state.selected_index) {
+                    state.selected_index = image_indices[0];
+                }
+
                 let prev_index = state.selected_index;
                 if i.key_pressed(egui::Key::ArrowDown) || i.key_pressed(egui::Key::J) {
-                    if state.selected_index + 1 < total {
-                        state.selected_index += 1;
+                    if img_total > 0 && cur_img_pos + 1 < img_total {
+                        state.selected_index = image_indices[cur_img_pos + 1];
                     }
                 }
                 if i.key_pressed(egui::Key::ArrowUp) || i.key_pressed(egui::Key::K) {
-                    if state.selected_index > 0 {
-                        state.selected_index -= 1;
+                    if cur_img_pos > 0 {
+                        state.selected_index = image_indices[cur_img_pos - 1];
                     }
                 }
                 if i.key_pressed(egui::Key::Space) {
-                    if state.selected_index + 1 < total {
-                        state.selected_index += 1;
+                    if img_total > 0 && cur_img_pos + 1 < img_total {
+                        state.selected_index = image_indices[cur_img_pos + 1];
                     }
                 }
                 if i.key_pressed(egui::Key::Home) {
-                    state.selected_index = 0;
+                    if !image_indices.is_empty() {
+                        state.selected_index = image_indices[0];
+                    }
                 }
                 if i.key_pressed(egui::Key::End) {
-                    state.selected_index = total.saturating_sub(1);
+                    if let Some(&last) = image_indices.last() {
+                        state.selected_index = last;
+                    }
                 }
                 if i.key_pressed(egui::Key::PageDown) {
-                    state.selected_index = (state.selected_index + 30).min(total - 1);
+                    if img_total > 0 {
+                        let target = (cur_img_pos + 30).min(img_total - 1);
+                        state.selected_index = image_indices[target];
+                    }
                 }
                 if i.key_pressed(egui::Key::PageUp) {
-                    state.selected_index = state.selected_index.saturating_sub(30);
+                    if !image_indices.is_empty() {
+                        let target = cur_img_pos.saturating_sub(30);
+                        state.selected_index = image_indices[target];
+                    }
                 }
-                // Mouse wheel scrolling
+                // Mouse wheel scrolling — navigate among images only
                 let scroll_delta = i.smooth_scroll_delta.y;
                 if scroll_delta != 0.0 {
                     let pointer_in_preview = state.preview_rect
                         .and_then(|r| i.pointer.latest_pos().map(|p| r.contains(p)))
                         .unwrap_or(false);
-                    if !pointer_in_preview {
+                    if !pointer_in_preview && img_total > 0 {
                         let lines = (scroll_delta / 30.0).round() as i32;
-                        let new_idx = (state.selected_index as i32 - lines)
-                            .clamp(0, total as i32 - 1) as usize;
-                        if new_idx != state.selected_index {
-                            state.selected_index = new_idx;
+                        let new_img_pos = (cur_img_pos as i32 - lines)
+                            .clamp(0, img_total as i32 - 1) as usize;
+                        if new_img_pos != cur_img_pos {
+                            state.selected_index = image_indices[new_img_pos];
                             state.scroll_to_selected = true;
                             state.reset_zoom();
                             state.clear_multi_select();
@@ -271,11 +295,9 @@ pub fn handle_input(
                     }
                 }
                 if i.key_pressed(egui::Key::Enter) {
-                    let abs = state.resolved_index();
+                    let abs = state.selected_index;
                     if let Some(entry) = dir.entries.get(abs) {
-                        if entry.is_dir {
-                            action.enter_directory = Some(abs);
-                        } else {
+                        if !entry.is_dir {
                             state.previous_browse_mode = BrowseMode::List;
                             state.view_mode = ViewMode::Single;
                             state.reset_zoom();
